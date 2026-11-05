@@ -118,6 +118,12 @@ function toCsvUrl(u) {
   return 'https://docs.google.com/spreadsheets/d/e/' + m[1] + '/pub?output=csv' + (g ? '&gid=' + g[1] : '');
 }
 
+/* ---------- gaji berjalan (sejak pembayaran terakhir) ---------- */
+const dayAfter = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d + 1); };
+const payStart = pt => pt ? dayAfter(pt) : new Date(cfg.periodStart + 'T00:00:00');
+async function lastPaid(uid) { const x = await getDoc(doc(db, 'payouts', 'last_' + uid)); return x.exists() ? x.data().paidThrough : null; }
+const isoToD = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
+
 /* ---------- navigasi ---------- */
 const MENU_TUTOR = [['profil', 'Profil & Jadwal'], ['kehadiran', 'Kehadiran & Penggantian'], ['gaji', 'Gaji']];
 const MENU_ADMIN = [['a_tutor', 'Kelola Tutor'], ['a_jadwal', 'Kelola Jadwal'], ['a_ganti', 'Penggantian'], ['a_absen', 'Data Absensi'], ['a_gaji', 'Gaji & Pengaturan']];
@@ -208,33 +214,19 @@ PAGES.profil = async () => {
 };
 
 PAGES.kehadiran = async () => {
-  const [attr, subs] = await Promise.all([getMyAttendance(), getSubs(me.uid)]);
+  const attr = await getMyAttendance();
   const att = attr.list;
-  const digantikan = subs.filter(s => s.originalUid === me.uid);
-  const menggantikan = subs.filter(s => s.substituteUid === me.uid);
   const byP = {}, byM = {};
   att.forEach(a => {
     byP[a.prog] = (byP[a.prog] || 0) + 1;
     const d = new Date(a.ts), k = d.getFullYear() * 100 + d.getMonth(); byM[k] = (byM[k] || 0) + 1;
   });
   let h = liveNote(attr.live) + `<div class="stats">
-    <div class="stat"><b>${att.length}</b>Total masuk</div>
-    <div class="stat"><b>${digantikan.length}</b>Digantikan tutor lain</div>
-    <div class="stat"><b>${menggantikan.length}</b>Menggantikan tutor lain</div></div>`;
+    <div class="stat"><b>${att.length}</b>Total masuk</div></div>`;
   h += '<div class="card"><h2>Masuk per program</h2>';
   h += Object.keys(byP).length ? '<div class="tw"><table>' + PROG.filter(p => byP[p.k]).map(p => `<tr><td>${p.n}</td><td class="r">${byP[p.k]}x</td></tr>`).join('') + '</table></div>' : '<div class="empty">Belum ada absensi.</div>';
   h += '</div><div class="card"><h2>Masuk per bulan</h2>';
   h += Object.keys(byM).length ? '<div class="tw"><table>' + Object.keys(byM).map(Number).sort((a, b) => b - a).map(k => `<tr><td>${BULAN[k % 100]} ${Math.floor(k / 100)}</td><td class="r">${byM[k]}x</td></tr>`).join('') + '</table></div>' : '<div class="empty">-</div>';
-  h += '</div><div class="card"><h2>Riwayat penggantian</h2>';
-  if (!subs.length) h += '<div class="empty">Belum ada penggantian.</div>';
-  else {
-    h += '<div class="tw"><table><tr><th>Tanggal</th><th>Keterangan</th><th>Kelas</th></tr>';
-    subs.forEach(s => {
-      const mine = s.originalUid === me.uid;
-      h += `<tr><td>${esc(s.date)}</td><td>${mine ? 'Digantikan oleh <b>' + esc(s.substituteNama) + '</b>' : 'Menggantikan <b>' + esc(s.originalNama) + '</b>'}${s.note ? '<div class="muted">' + esc(s.note) + '</div>' : ''}</td><td>${esc(progName(s.prog))}${s.kelas ? ' / ' + esc(s.kelas) : ''}</td></tr>`;
-    });
-    h += '</table></div>';
-  }
   h += '</div><div class="card"><h2>Riwayat masuk (30 terakhir)</h2>';
   if (!att.length) h += '<div class="empty">Belum ada absensi.</div>';
   else h += '<div class="tw"><table><tr><th>Waktu</th><th>Program</th></tr>' + att.slice(-30).reverse().map(a => `<tr><td>${fmtDT(new Date(a.ts))}</td><td>${esc(progName(a.prog))}</td></tr>`).join('') + '</table></div>';
@@ -242,21 +234,31 @@ PAGES.kehadiran = async () => {
 };
 
 PAGES.gaji = async () => {
-  const [attr, pay] = await Promise.all([getMyAttendance(), getPayouts(me.uid)]);
-  const att = attr.list;
-  const ps = getPeriods().reverse();
-  let h = `<div class="card">${liveNote(attr.live)}<div class="muted">Gaji dihitung dari jumlah absen x tarif (Regular ${rp(cfg.tReg)}/meeting, Privat ${rp(cfg.tPriv)}/sesi) dan dibayarkan setiap ${esc(cfg.periodMonths)} bulan sekali.</div></div>`;
-  ps.forEach(p => {
-    const r = countByProg(att, p.s, p.e), paid = pay[p.i] && pay[p.i].paid;
-    const badge = p.running ? '<span class="badge b-run">Berjalan</span>' : paid ? '<span class="badge b-ok">Sudah dibayar</span>' : '<span class="badge b-wait">Menunggu pembayaran</span>';
-    h += `<div class="card"><h2>Periode ${p.i + 1}: ${fmtD(p.s)} - ${fmtD(p.last)} ${badge}</h2>
-      <div class="muted">${p.running ? 'Estimasi cair' : 'Jadwal cair'}: ${fmtD(p.e)}</div>
-      <div class="tw"><table><tr><th>Program</th><th class="r">Jumlah</th><th class="r">Tarif</th><th class="r">Subtotal</th></tr>`;
+  const [base, pt] = await Promise.all([getAttendance(me.uid), lastPaid(me.uid)]);
+  const st = payStart(pt);
+  view(`<div class="card"><h2>Gaji berjalan</h2>
+    <div class="muted" id="gRange"></div>
+    <div class="bigtotal" id="gTotal">Rp0</div>
+    <div class="muted">Waktu sekarang: <b id="clock"></b></div>
+    <div id="gBody" style="margin-top:10px"></div>
+    <div class="muted" style="margin-top:12px">${pt ? 'Terakhir dibayar sampai tanggal <b>' + fmtD(isoToD(pt)) + '</b>. Gaji di atas dihitung dari absen setelah tanggal itu.' : 'Belum ada catatan pembayaran. Gaji dihitung dari awal pencatatan (' + fmtD(st) + ').'}
+    Waktu pencairan menyesuaikan yayasan; angka bertambah otomatis setiap Anda absen.</div></div>`);
+  const draw = async () => {
+    if (page !== 'gaji' || !$('#gBody')) return;
+    const a = await getMyAttendance(base), now = new Date();
+    const r = countByProg(a.list, st, new Date(now.getTime() + 1));
+    $('#gRange').textContent = fmtD(st) + ' - ' + fmtD(now) + ' (hari ini)';
+    $('#gTotal').textContent = rp(r.pay);
     const rows = PROG.filter(x => r.c[x.k]);
-    h += rows.length ? rows.map(x => `<tr><td>${x.n}</td><td class="r">${r.c[x.k]}</td><td class="r">${rp(rateOf(x.k, cfg))}</td><td class="r">${rp(r.c[x.k] * rateOf(x.k, cfg))}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">Belum ada absensi pada periode ini.</td></tr>';
-    h += `<tr class="tot"><td>TOTAL</td><td class="r">${r.total}</td><td></td><td class="r">${rp(r.pay)}</td></tr></table></div></div>`;
-  });
-  view(h);
+    $('#gBody').innerHTML = '<table class="gt"><tr><th>Program</th><th class="r">Jumlah</th><th class="r">Subtotal</th></tr>' +
+      (rows.length ? rows.map(x => `<tr><td>${x.n}<div class="muted">${rp(rateOf(x.k, cfg))} / sesi</div></td><td class="r">${r.c[x.k]}x</td><td class="r">${rp(r.c[x.k] * rateOf(x.k, cfg))}</td></tr>`).join('') : '<tr><td colspan="3" class="empty">Belum ada absensi setelah pembayaran terakhir.</td></tr>') +
+      `<tr class="tot"><td>TOTAL</td><td class="r">${r.total}x</td><td class="r">${rp(r.pay)}</td></tr></table>`;
+  };
+  await draw();
+  const tick = () => { if (page !== 'gaji' || !$('#clock')) return false; const n = new Date(); $('#clock').textContent = fmtD(n) + ' ' + p2(n.getHours()) + ':' + p2(n.getMinutes()) + ':' + p2(n.getSeconds()); return true; };
+  tick();
+  const t1 = setInterval(() => { if (!tick()) { clearInterval(t1); clearInterval(t2); } }, 1000);
+  const t2 = setInterval(() => { draw().catch(() => {}); }, 60000);
 };
 
 /* ---------- halaman admin ---------- */
@@ -431,8 +433,8 @@ async function fetchSheetRows() {
     return sheetCache.rows;
   } catch (e) { return null; }
 }
-async function getMyAttendance() {
-  const list = await getAttendance(me.uid);
+async function getMyAttendance(base) {
+  const list = base ? base.slice() : await getAttendance(me.uid);
   const rows = await fetchSheetRows();
   if (!rows) return { list, live: false };
   const have = new Set(list.map(a => a.id)), mine = norm(me.nama);
@@ -478,39 +480,40 @@ PAGES.a_absen = async () => {
 };
 
 PAGES.a_gaji = async () => {
-  const ts = (await allTutors());
+  const ts = (await allTutors()).filter(t => t.role !== 'admin');
   if (cfg.sheetUrl) { try { await syncSheet(ts); } catch (e) {} }
   const att = mapDocs(await getDocs(collection(db, 'attendance')));
-  const pays = mapDocs(await getDocs(collection(db, 'payouts')));
-  const ps = getPeriods();
-  const sel = Math.min(+(PAGES.a_gaji.sel ?? ps.length - 1), ps.length - 1);
-  const p = ps[sel];
-  let h = `<div class="card"><h2>Pengaturan tarif & periode</h2><div class="row2">
+  const last = {}; mapDocs(await getDocs(collection(db, 'payouts'))).forEach(x => { if (x.id.indexOf('last_') === 0) last[x.tutorUid] = x.paidThrough; });
+  const now = new Date(), end = new Date(now.getTime() + 1);
+  let h = `<div class="card"><h2>Pengaturan tarif</h2><div class="row2">
     <div><label>Tarif Regular / meeting</label><input id="sR" type="number" value="${esc(cfg.tReg)}"></div>
     <div><label>Tarif Privat / sesi</label><input id="sP" type="number" value="${esc(cfg.tPriv)}"></div>
     <div><label>Tarif Diploma</label><input id="sD" type="number" value="${esc(cfg.tDip)}"></div>
-    <div><label>Periode mulai</label><input id="sS" type="date" value="${esc(cfg.periodStart)}"></div>
-    <div><label>Lama periode (bulan)</label><input id="sN" type="number" min="1" value="${esc(cfg.periodMonths)}"></div></div>
-    <button class="btn" id="saveCfg">Simpan pengaturan</button></div>`;
-  if (!p) return view(h);
-  h += `<div class="card"><h2>Gaji semua tutor</h2><label>Periode</label><select id="selP">${ps.map((x, i) => `<option value="${i}" ${i === sel ? 'selected' : ''}>Periode ${x.i + 1}: ${fmtD(x.s)} - ${fmtD(x.last)}${x.running ? ' (berjalan)' : ''}</option>`).join('')}</select>
-    <div class="tw" style="margin-top:10px"><table><tr><th>Tutor</th>${PROG.map(x => `<th class="r">${x.n}</th>`).join('')}<th class="r">Total gaji</th><th>Dibayar</th></tr>`;
+    <div><label>Hitung gaji mulai tanggal (jika belum pernah dibayar)</label><input id="sS" type="date" value="${esc(cfg.periodStart)}"></div></div>
+    <button class="btn" id="saveCfg">Simpan pengaturan</button></div>
+    <div class="card"><h2>Gaji berjalan semua tutor</h2>
+    <div class="muted">Dihitung dari absen setelah pembayaran terakhir tiap tutor sampai hari ini. Setelah gaji dikeluarkan, tekan <b>Tandai dibayar</b>; hitungan tutor itu mulai dari nol.</div>
+    <label>Dibayar sampai tanggal</label><input type="date" id="payDate" value="${isoD(now)}" style="max-width:200px">
+    <div class="tw" style="margin-top:10px"><table class="gt"><tr><th>Tutor</th><th class="r">Absen</th><th class="r">Gaji</th><th></th></tr>`;
   let grand = 0;
   ts.forEach(t => {
-    const r = countByProg(att.filter(a => a.tutorUid === t.id), p.s, p.e); grand += r.pay;
-    const paid = pays.some(x => x.tutorUid === t.id && +x.period === p.i && x.paid);
-    h += `<tr><td>${esc(t.nama)}</td>${PROG.map(x => `<td class="r">${r.c[x.k] || 0}</td>`).join('')}<td class="r"><b>${rp(r.pay)}</b></td><td><input type="checkbox" data-pay="${esc(t.id)}" ${paid ? 'checked' : ''} style="width:auto"></td></tr>`;
+    const st = payStart(last[t.id] || null);
+    const r = countByProg(att.filter(a => a.tutorUid === t.id), st, end); grand += r.pay;
+    h += `<tr><td>${esc(t.nama)}<div class="muted">sejak ${fmtD(st)}${last[t.id] ? '' : ' (belum pernah dibayar)'}</div></td><td class="r">${r.total}</td><td class="r"><b>${rp(r.pay)}</b></td>
+      <td><button class="btn sm" data-pay="${esc(t.id)}" data-amt="${r.pay}">Tandai dibayar</button></td></tr>`;
   });
-  h += `<tr class="tot"><td>TOTAL</td><td colspan="${PROG.length}"></td><td class="r">${rp(grand)}</td><td></td></tr></table></div></div>`;
+  h += `<tr class="tot"><td>TOTAL</td><td></td><td class="r">${rp(grand)}</td><td></td></tr></table></div></div>`;
   view(h);
   $('#saveCfg').onclick = async () => {
-    const n = { tReg: +$('#sR').value, tPriv: +$('#sP').value, tDip: +$('#sD').value, periodStart: $('#sS').value, periodMonths: Math.max(1, +$('#sN').value || 3) };
-    await setDoc(doc(db, 'settings', 'config'), n); cfg = Object.assign({}, DEFAULT_CFG, n); toast('Pengaturan tersimpan.'); go('a_gaji');
+    const n = { tReg: +$('#sR').value, tPriv: +$('#sP').value, tDip: +$('#sD').value, periodStart: $('#sS').value };
+    await setDoc(doc(db, 'settings', 'config'), n, { merge: true }); Object.assign(cfg, n); toast('Pengaturan tersimpan.'); go('a_gaji');
   };
-  $('#selP').onchange = e => { PAGES.a_gaji.sel = +e.target.value; go('a_gaji'); };
-  $('#content').onchange = async e => {
-    const c = e.target.closest('[data-pay]'); if (!c) return;
-    await setDoc(doc(db, 'payouts', p.i + '_' + c.dataset.pay), { tutorUid: c.dataset.pay, period: p.i, paid: c.checked, paidAt: Date.now() });
-    toast(c.checked ? 'Ditandai sudah dibayar.' : 'Tanda dibayar dibatalkan.');
+  $('#content').onclick = async e => {
+    const b = e.target.closest('[data-pay]'); if (!b) return;
+    const d = $('#payDate').value, t = ts.find(x => x.id === b.dataset.pay);
+    if (!d) return toast('Pilih tanggal "dibayar sampai" dulu.');
+    if (!confirm('Tandai ' + t.nama + ' sudah dibayar ' + rp(+b.dataset.amt) + ' (absen sampai ' + fmtD(isoToD(d)) + ')?')) return;
+    await setDoc(doc(db, 'payouts', 'last_' + t.id), { tutorUid: t.id, paidThrough: d, paidAt: Date.now() });
+    toast('Tersimpan.'); go('a_gaji');
   };
 };
