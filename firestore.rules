@@ -29,7 +29,7 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
     match /payouts/{id} {
-      allow read: if signedIn() && (resource.data.tutorUid == request.auth.uid || isAdmin());
+      allow read: if signedIn() && (id == ('last_' + request.auth.uid) || resource.data.tutorUid == request.auth.uid || isAdmin());
       allow write: if isAdmin();
     }
   }
