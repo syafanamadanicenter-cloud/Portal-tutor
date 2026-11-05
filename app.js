@@ -208,7 +208,8 @@ PAGES.profil = async () => {
 };
 
 PAGES.kehadiran = async () => {
-  const [att, subs] = await Promise.all([getAttendance(me.uid), getSubs(me.uid)]);
+  const [attr, subs] = await Promise.all([getMyAttendance(), getSubs(me.uid)]);
+  const att = attr.list;
   const digantikan = subs.filter(s => s.originalUid === me.uid);
   const menggantikan = subs.filter(s => s.substituteUid === me.uid);
   const byP = {}, byM = {};
@@ -216,7 +217,7 @@ PAGES.kehadiran = async () => {
     byP[a.prog] = (byP[a.prog] || 0) + 1;
     const d = new Date(a.ts), k = d.getFullYear() * 100 + d.getMonth(); byM[k] = (byM[k] || 0) + 1;
   });
-  let h = `<div class="stats">
+  let h = liveNote(attr.live) + `<div class="stats">
     <div class="stat"><b>${att.length}</b>Total masuk</div>
     <div class="stat"><b>${digantikan.length}</b>Digantikan tutor lain</div>
     <div class="stat"><b>${menggantikan.length}</b>Menggantikan tutor lain</div></div>`;
@@ -241,9 +242,10 @@ PAGES.kehadiran = async () => {
 };
 
 PAGES.gaji = async () => {
-  const [att, pay] = await Promise.all([getAttendance(me.uid), getPayouts(me.uid)]);
+  const [attr, pay] = await Promise.all([getMyAttendance(), getPayouts(me.uid)]);
+  const att = attr.list;
   const ps = getPeriods().reverse();
-  let h = `<div class="card"><div class="muted">Gaji dihitung dari jumlah absen x tarif (Regular ${rp(cfg.tReg)}/meeting, Privat ${rp(cfg.tPriv)}/sesi) dan dibayarkan setiap ${esc(cfg.periodMonths)} bulan sekali.</div></div>`;
+  let h = `<div class="card">${liveNote(attr.live)}<div class="muted">Gaji dihitung dari jumlah absen x tarif (Regular ${rp(cfg.tReg)}/meeting, Privat ${rp(cfg.tPriv)}/sesi) dan dibayarkan setiap ${esc(cfg.periodMonths)} bulan sekali.</div></div>`;
   ps.forEach(p => {
     const r = countByProg(att, p.s, p.e), paid = pay[p.i] && pay[p.i].paid;
     const badge = p.running ? '<span class="badge b-run">Berjalan</span>' : paid ? '<span class="badge b-ok">Sudah dibayar</span>' : '<span class="badge b-wait">Menunggu pembayaran</span>';
@@ -414,6 +416,36 @@ async function syncSheet(ts) {
   return importText(text, ts);
 }
 
+/* ---------- data langsung dari Sheet (untuk tutor) ---------- */
+let sheetCache = { t: 0, rows: null };
+async function fetchSheetRows() {
+  const url = toCsvUrl(cfg.sheetUrl);
+  if (!url) return null;
+  if (sheetCache.rows && Date.now() - sheetCache.t < 60000) return sheetCache.rows;
+  try {
+    const r = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return null;
+    const text = await r.text();
+    if (/^\s*<(!doctype|html)/i.test(text)) return null;
+    sheetCache = { t: Date.now(), rows: parseAbsensi(text).out };
+    return sheetCache.rows;
+  } catch (e) { return null; }
+}
+async function getMyAttendance() {
+  const list = await getAttendance(me.uid);
+  const rows = await fetchSheetRows();
+  if (!rows) return { list, live: false };
+  const have = new Set(list.map(a => a.id)), mine = norm(me.nama);
+  rows.forEach(r => {
+    if (r.ket !== 'IN' || norm(r.nama) !== mine) return;
+    const id = r.ts + '_' + me.uid + '_' + r.prog;
+    if (!have.has(id)) { have.add(id); list.push({ id, tutorUid: me.uid, nama: me.nama, prog: r.prog, ts: r.ts }); }
+  });
+  list.sort((a, b) => a.ts - b.ts);
+  return { list, live: true };
+}
+const liveNote = l => `<div class="muted" style="margin-bottom:8px">${l ? 'Terhubung langsung ke absensi Google Form (diperbarui setiap halaman dibuka; absen terbaru bisa tampil beberapa menit kemudian).' : 'Menampilkan data yang tersimpan di portal.'}</div>`;
+
 PAGES.a_absen = async () => {
   const ts = await allTutors();
   const att = mapDocs(await getDocs(collection(db, 'attendance')));
@@ -447,6 +479,7 @@ PAGES.a_absen = async () => {
 
 PAGES.a_gaji = async () => {
   const ts = (await allTutors());
+  if (cfg.sheetUrl) { try { await syncSheet(ts); } catch (e) {} }
   const att = mapDocs(await getDocs(collection(db, 'attendance')));
   const pays = mapDocs(await getDocs(collection(db, 'payouts')));
   const ps = getPeriods();
