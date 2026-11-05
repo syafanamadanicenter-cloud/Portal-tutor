@@ -1,10 +1,11 @@
 // GANTI isi di bawah dengan konfigurasi dari Firebase Console
 // (Project settings > General > Your apps > Web app > SDK setup and configuration)
-export const firebaseConfig = {
-  apiKey: "ISI_API_KEY",
-  authDomain: "ISI_PROJECT.firebaseapp.com",
-  projectId: "ISI_PROJECT_ID",
-  storageBucket: "ISI_PROJECT.appspot.com",
-  messagingSenderId: "ISI_SENDER_ID",
-  appId: "ISI_APP_ID"
+const firebaseConfig = {
+  apiKey: "AIzaSyC_UpYrLz8lN43mzZgNFc_Yet0Lnf-3nqI",
+  authDomain: "portal-tutor.firebaseapp.com",
+  projectId: "portal-tutor",
+  storageBucket: "portal-tutor.firebasestorage.app",
+  messagingSenderId: "2290054364",
+  appId: "1:2290054364:web:128081131b21973d603019",
+  measurementId: "G-ESGTZDER1M"
 };
