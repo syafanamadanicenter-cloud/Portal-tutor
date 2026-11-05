@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Portal Tutor Yayasan Syafana</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,18 +17,20 @@
     <h1>Portal Tutor</h1>
     <p class="muted">Yayasan Syafana</p>
     <label>Email</label>
-    <input type="email" id="email" autocomplete="username" required>
+    <input type="email" id="email" autocomplete="username" placeholder="nama@email.com" required>
     <label>Password</label>
-    <input type="password" id="password" autocomplete="current-password" required>
+    <input type="password" id="password" autocomplete="current-password" placeholder="••••••••" required>
     <div id="loginErr" class="err"></div>
-    <button type="submit" class="btn">Masuk</button>
+    <button type="submit" class="btn">Masuk ke Portal</button>
     <a href="#" id="forgot" class="small">Lupa password?</a>
   </form>
 </section>
 
 <section id="appView" hidden>
   <header class="topbar">
-    <button id="menuBtn" aria-label="Menu" class="iconbtn">&#9776;</button>
+    <button id="menuBtn" aria-label="Menu" class="iconbtn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+    </button>
     <div id="pageTitle" class="ttl">Profil</div>
   </header>
   <div id="scrim" class="scrim" hidden></div>
@@ -38,9 +43,21 @@
 </section>
 
 <div id="toast" class="toast" hidden></div>
+<script>
+(function(){var msgs=[];
+function show(){var l=document.getElementById("loading");if(!l||l.hidden)return;
+l.textContent="";var b=document.createElement("div");b.style.cssText="max-width:320px;font-size:13px;color:#fca5a5";
+var h=document.createElement("b");h.textContent="Aplikasi gagal dimuat.";b.appendChild(h);
+var t=document.createElement("p");t.textContent='Periksa file firebase-config.js: harus diawali "export const firebaseConfig = {", berisi 6 nilai, dan TIDAK boleh ada baris import atau initializeApp.';b.appendChild(t);
+var m=document.createElement("p");m.textContent=msgs.join(" | ");m.style.color="#94a3b8";b.appendChild(m);l.appendChild(b);}
+window.addEventListener("error",function(e){msgs.push(String(e.message||"error"));setTimeout(show,400)});
+window.addEventListener("unhandledrejection",function(e){msgs.push(String((e.reason&&e.reason.message)||e.reason));setTimeout(show,400)});
+setTimeout(function(){if(!window.__appStarted)show()},6000);})();
+</script>
 <script type="module" src="app.js"></script>
-<script>/* versi web biasa: bersihkan sisa cache aplikasi lama jika ada */
+<script>
 if("serviceWorker"in navigator){navigator.serviceWorker.getRegistrations().then(r=>r.forEach(x=>x.unregister())).catch(()=>{});}
-if(window.caches){caches.keys().then(k=>k.forEach(x=>caches.delete(x))).catch(()=>{});}</script>
+if(window.caches){caches.keys().then(k=>k.forEach(x=>caches.delete(x))).catch(()=>{});}
+</script>
 </body>
 </html>
