@@ -51,7 +51,7 @@ function authMsg(e) {
 let me = null;            // profil tutors/{uid}
 let cfg = null;           // pengaturan
 let page = 'profil';
-const DEFAULT_CFG = { tReg: 20000, tPriv: 25000, tDip: 0, periodStart: '2026-07-07', periodMonths: 3 };
+const DEFAULT_CFG = { tReg: 20000, tPriv: 25000, tDip: 0, periodStart: '2026-07-07', periodMonths: 3, sheetUrl: '' };
 const rateOf = (prog, c) => prog === 'REGULAR' ? +c.tReg : prog === 'DIPLOMA' ? +c.tDip : +c.tPriv;
 
 /* ---------- data ---------- */
@@ -100,6 +100,22 @@ function countByProg(list, s, e) {
     if (a.ts >= s.getTime() && a.ts < e.getTime()) { c[a.prog] = (c[a.prog] || 0) + 1; total++; pay += rateOf(a.prog, cfg); }
   });
   return { c, total, pay };
+}
+
+/* ---------- bulan jadwal ---------- */
+const curMonth = () => { const d = new Date(); return d.getFullYear() + '-' + p2(d.getMonth() + 1); };
+const prevMonth = m => { const [y, mo] = m.split('-').map(Number); const d = new Date(y, mo - 2, 1); return d.getFullYear() + '-' + p2(d.getMonth() + 1); };
+const monthLabel = m => { const [y, mo] = m.split('-').map(Number); return BULAN[mo - 1] + ' ' + y; };
+const inMonth = (x, m) => !x.bulan || x.bulan === m;
+
+/* ---------- sinkron Google Sheet ---------- */
+function toCsvUrl(u) {
+  if (!u) return '';
+  if (/output=csv/.test(u)) return u;
+  const m = u.match(/\/d\/e\/([A-Za-z0-9_-]+)/);
+  if (!m) return '';
+  const g = u.match(/[?&#]gid=(\d+)/);
+  return 'https://docs.google.com/spreadsheets/d/e/' + m[1] + '/pub?output=csv' + (g ? '&gid=' + g[1] : '');
 }
 
 /* ---------- navigasi ---------- */
@@ -158,6 +174,9 @@ onAuthStateChanged(auth, async user => {
     $('#whoName').textContent = me.nama; $('#whoRole').textContent = me.role === 'admin' ? 'Admin' : 'Tutor';
     $('#loginView').hidden = true; $('#appView').hidden = false;
     go('profil');
+    if (me.role === 'admin' && cfg.sheetUrl) {
+      allTutors().then(ts => syncSheet(ts)).then(r => { if (r.fresh) toast(r.fresh + ' absensi baru disinkron dari Sheet.'); }).catch(() => {});
+    }
   } catch (err) { $('#loginErr').textContent = 'Gagal memuat akun: ' + err.message; $('#loginView').hidden = false; }
 });
 
@@ -165,24 +184,27 @@ onAuthStateChanged(auth, async user => {
 const PAGES = {};
 
 PAGES.profil = async () => {
-  const sch = await getSchedules(me.uid);
-  const today = new Date().getDay();
+  const bln = PAGES.profil.bln || curMonth();
+  const sch = (await getSchedules(me.uid)).filter(x => inMonth(x, bln));
+  const today = new Date().getDay(), isNow = bln === curMonth();
   const kelas = (me.kelas || []);
   let h = `<div class="card"><h2>Profil</h2>
     <div><b>${esc(me.nama)}</b></div><div class="muted">${esc(me.email)}</div>
     <h2 style="margin-top:14px">Kelas yang dipegang</h2>
     ${kelas.length ? kelas.map(k => `<span class="chip">${esc(k)}</span>`).join('') : '<div class="empty">Belum ada kelas. Hubungi admin.</div>'}
   </div>`;
-  h += '<div class="card"><h2>Jadwal mengajar</h2>';
-  if (!sch.length) h += '<div class="empty">Belum ada jadwal.</div>';
+  h += `<div class="card"><h2>Jadwal mengajar</h2><label>Bulan</label><input type="month" id="bln" value="${esc(bln)}" style="max-width:200px">`;
+  if (!sch.length) h += `<div class="empty">Belum ada jadwal untuk ${esc(monthLabel(bln))}.</div>`;
   else {
-    h += '<div class="tw"><table><tr><th>Hari</th><th>Jam</th><th>Program</th><th>Kelas</th></tr>';
+    h += '<div class="tw" style="margin-top:8px"><table><tr><th>Hari</th><th>Jam</th><th>Program</th><th>Kelas</th></tr>';
     HARI_ORDER.forEach(hr => sch.filter(x => +x.hari === hr).sort((a, b) => a.mulai.localeCompare(b.mulai)).forEach(x => {
-      h += `<tr class="${hr === today ? 'today' : ''}"><td>${HARI[hr]}${hr === today ? ' (hari ini)' : ''}</td><td>${esc(x.mulai)} - ${esc(x.selesai)}</td><td>${esc(progName(x.prog))}</td><td>${esc(x.kelas)}</td></tr>`;
+      const t = isNow && hr === today;
+      h += `<tr class="${t ? 'today' : ''}"><td>${HARI[hr]}${t ? ' (hari ini)' : ''}</td><td>${esc(x.mulai)} - ${esc(x.selesai)}</td><td>${esc(progName(x.prog))}</td><td>${esc(x.kelas)}</td></tr>`;
     }));
     h += '</table></div>';
   }
   view(h + '</div>');
+  $('#bln').onchange = e => { if (e.target.value) { PAGES.profil.bln = e.target.value; go('profil'); } };
 };
 
 PAGES.kehadiran = async () => {
@@ -281,10 +303,15 @@ PAGES.a_tutor = async () => {
 };
 
 PAGES.a_jadwal = async () => {
+  const bln = PAGES.a_jadwal.bln || curMonth();
   const ts = await allTutors();
-  const sch = mapDocs(await getDocs(collection(db, 'schedules')));
+  const all = mapDocs(await getDocs(collection(db, 'schedules')));
+  const sch = all.filter(x => inMonth(x, bln));
+  const prevCount = all.filter(x => x.bulan === prevMonth(bln)).length;
   const nm = id => (ts.find(t => t.id === id) || { nama: '(terhapus)' }).nama;
-  let h = `<div class="card"><h2>Tambah jadwal</h2><div class="row2">
+  let h = `<div class="card"><h2>Bulan jadwal</h2><div class="row2"><div><label>Pilih bulan</label><input type="month" id="jB" value="${esc(bln)}"></div></div>
+    <button class="btn sec" id="copyPrev">Salin jadwal dari ${esc(monthLabel(prevMonth(bln)))} (${prevCount})</button></div>
+    <div class="card"><h2>Tambah jadwal ${esc(monthLabel(bln))}</h2><div class="row2">
     <div><label>Tutor</label><select id="jT">${tutorOpts(ts)}</select></div>
     <div><label>Hari</label><select id="jH">${HARI_ORDER.map(i => `<option value="${i}">${HARI[i]}</option>`).join('')}</select></div>
     <div><label>Mulai</label><input id="jM" type="time" value="14:00"></div>
@@ -292,14 +319,23 @@ PAGES.a_jadwal = async () => {
     <div><label>Program</label><select id="jP">${progOpts()}</select></div>
     <div><label>Nama kelas / keterangan</label><input id="jK" placeholder="mis. Kelas Bahasa Inggris"></div></div>
     <button class="btn" id="addJ">Tambah jadwal</button></div>
-    <div class="card"><h2>Semua jadwal (${sch.length})</h2><div class="tw"><table><tr><th>Tutor</th><th>Hari</th><th>Jam</th><th>Program</th><th>Kelas</th><th></th></tr>`;
+    <div class="card"><h2>Jadwal ${esc(monthLabel(bln))} (${sch.length})</h2><div class="tw"><table><tr><th>Tutor</th><th>Hari</th><th>Jam</th><th>Program</th><th>Kelas</th><th></th></tr>`;
   sch.sort((a, b) => nm(a.tutorUid).localeCompare(nm(b.tutorUid)) || HARI_ORDER.indexOf(+a.hari) - HARI_ORDER.indexOf(+b.hari) || a.mulai.localeCompare(b.mulai))
-    .forEach(x => h += `<tr><td>${esc(nm(x.tutorUid))}</td><td>${HARI[x.hari]}</td><td>${esc(x.mulai)}-${esc(x.selesai)}</td><td>${esc(progName(x.prog))}</td><td>${esc(x.kelas)}</td><td><button class="btn sm danger" data-del="${esc(x.id)}">Hapus</button></td></tr>`);
+    .forEach(x => h += `<tr><td>${esc(nm(x.tutorUid))}</td><td>${HARI[x.hari]}</td><td>${esc(x.mulai)}-${esc(x.selesai)}</td><td>${esc(progName(x.prog))}</td><td>${esc(x.kelas)}${x.bulan ? '' : ' <span class="muted">(semua bulan)</span>'}</td><td><button class="btn sm danger" data-del="${esc(x.id)}">Hapus</button></td></tr>`);
   view(h + '</table></div></div>');
+  $('#jB').onchange = e => { if (e.target.value) { PAGES.a_jadwal.bln = e.target.value; go('a_jadwal'); } };
   $('#addJ').onclick = async () => {
     if (!$('#jT').value) return toast('Tambah tutor dulu.');
-    await addDoc(collection(db, 'schedules'), { tutorUid: $('#jT').value, hari: +$('#jH').value, mulai: $('#jM').value, selesai: $('#jS').value, prog: $('#jP').value, kelas: $('#jK').value.trim() });
+    await addDoc(collection(db, 'schedules'), { bulan: bln, tutorUid: $('#jT').value, hari: +$('#jH').value, mulai: $('#jM').value, selesai: $('#jS').value, prog: $('#jP').value, kelas: $('#jK').value.trim() });
     toast('Jadwal ditambahkan.'); go('a_jadwal');
+  };
+  $('#copyPrev').onclick = async () => {
+    const src = all.filter(x => x.bulan === prevMonth(bln));
+    if (!src.length) return toast('Tidak ada jadwal di bulan sebelumnya.');
+    if (!confirm('Salin ' + src.length + ' jadwal dari ' + monthLabel(prevMonth(bln)) + ' ke ' + monthLabel(bln) + '?')) return;
+    const b = writeBatch(db);
+    src.forEach(x => { const { id, ...d } = x; b.set(doc(collection(db, 'schedules')), Object.assign({}, d, { bulan: bln })); });
+    await b.commit(); toast('Jadwal disalin.'); go('a_jadwal');
   };
   $('#content').onclick = async e => { const b = e.target.closest('[data-del]'); if (b && confirm('Hapus jadwal ini?')) { await deleteDoc(doc(db, 'schedules', b.dataset.del)); go('a_jadwal'); } };
 };
@@ -342,35 +378,71 @@ function parseAbsensi(text) {
   return { out, bad };
 }
 
+async function importText(text, ts) {
+  const { out, bad } = parseAbsensi(text);
+  const byName = {}; ts.forEach(t => byName[norm(t.nama)] = t);
+  const ok = [], unk = {}; let nonIn = 0;
+  out.forEach(r => {
+    if (r.ket !== 'IN') { nonIn++; return; }
+    const t = byName[norm(r.nama)];
+    if (!t) { unk[r.nama] = (unk[r.nama] || 0) + 1; return; }
+    ok.push({ id: r.ts + '_' + t.id + '_' + r.prog, data: { tutorUid: t.id, nama: t.nama, prog: r.prog, ts: r.ts } });
+  });
+  const have = new Set((await getDocs(collection(db, 'attendance'))).docs.map(d => d.id));
+  const seen = new Set(), fresh = ok.filter(x => { if (have.has(x.id) || seen.has(x.id)) return false; seen.add(x.id); return true; });
+  for (let i = 0; i < fresh.length; i += 400) {
+    const b = writeBatch(db); fresh.slice(i, i + 400).forEach(x => b.set(doc(db, 'attendance', x.id), x.data)); await b.commit();
+  }
+  let r = `<div class="warn"><b>${fresh.length} absensi baru</b> masuk (${ok.length - fresh.length} sudah ada sebelumnya, dari ${out.length} baris terbaca).`;
+  if (Object.keys(unk).length) r += '<br><b>Nama tutor tidak cocok, dilewati:</b> ' + Object.keys(unk).map(n => esc(n) + ' (' + unk[n] + ')').join(', ') + '. Tambahkan tutor dengan nama persis sama di Kelola Tutor, lalu sinkron lagi.';
+  if (nonIn) r += `<br>${nonIn} baris bukan "IN" tidak dihitung.`;
+  if (bad.length) r += '<br>' + bad.length + ' baris tidak dikenali.';
+  return { html: r + '</div>', fresh: fresh.length };
+}
+async function syncSheet(ts) {
+  const url = toCsvUrl(cfg.sheetUrl);
+  if (!url) return { html: '<div class="warn">Isi link Google Sheet dulu, lalu simpan.</div>', fresh: 0 };
+  let text;
+  try {
+    const r = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    text = await r.text();
+  } catch (e) {
+    return { html: '<div class="warn">Gagal mengambil data dari Sheet (' + esc(e.message) + '). Pastikan Sheet sudah di-<i>Publikasikan ke web</i> (File &gt; Bagikan &gt; Publikasikan ke web). Sementara itu Anda bisa impor lewat tempel di bawah.</div>', fresh: 0 };
+  }
+  if (/^\s*<(!doctype|html)/i.test(text)) return { html: '<div class="warn">Link bukan data CSV. Tempel link "Publikasikan ke web" dari Google Sheet.</div>', fresh: 0 };
+  return importText(text, ts);
+}
+
 PAGES.a_absen = async () => {
   const ts = await allTutors();
   const att = mapDocs(await getDocs(collection(db, 'attendance')));
   const cnt = {}; att.forEach(a => cnt[a.tutorUid] = (cnt[a.tutorUid] || 0) + 1);
-  let h = `<div class="card"><h2>Impor absensi dari Google Sheet</h2>
-    <div class="muted">Salin baris dari Sheet (Timestamp, Nama tutor, Program, Keterangan) lalu tempel. Impor ulang aman: data yang sama tidak akan dobel.</div>
-    <textarea id="imp" rows="6" placeholder="07/07/2026 12:16:32&#9;Mr. Ardani&#9;KELAS PRIVAT PAGI&#9;IN"></textarea>
-    <button class="btn" id="doImp">Impor</button><div id="impRes"></div></div>
+  let h = `<div class="card"><h2>Sinkron dari Google Sheet</h2>
+    <div class="muted">Absensi tutor tetap lewat Google Form &rarr; Google Sheet. Tekan <b>Sinkron sekarang</b> agar data terbaru masuk ke portal. Data yang sudah ada tidak akan dobel. Sheet bisa terlambat beberapa menit tampil di link publikasi.</div>
+    <label>Link Google Sheet (hasil "Publikasikan ke web")</label><input id="sheetUrl" value="${esc(cfg.sheetUrl || '')}" placeholder="https://docs.google.com/spreadsheets/.../pubhtml">
+    <button class="btn sec" id="saveUrl">Simpan link</button> <button class="btn" id="doSync">Sinkron sekarang</button>
+    <div id="impRes"></div></div>
+    <div class="card"><h2>Impor manual (tempel)</h2>
+    <div class="muted">Cadangan jika sinkron gagal: salin baris dari Sheet (Timestamp, Nama tutor, Program, Keterangan) lalu tempel.</div>
+    <textarea id="imp" rows="5" placeholder="07/07/2026 12:16:32&#9;Mr. Ardani&#9;KELAS PRIVAT PAGI&#9;IN"></textarea>
+    <button class="btn" id="doImp">Impor</button></div>
     <div class="card"><h2>Jumlah absensi tersimpan (${att.length})</h2><div class="tw"><table>` +
     ts.map(t => `<tr><td>${esc(t.nama)}</td><td class="r">${cnt[t.id] || 0}</td></tr>`).join('') + '</table></div></div>';
   view(h);
-  $('#doImp').onclick = async () => {
-    const { out, bad } = parseAbsensi($('#imp').value);
-    const byName = {}; ts.forEach(t => byName[norm(t.nama)] = t);
-    const ok = [], unk = {};
-    out.forEach(r => {
-      if (r.ket !== 'IN') return;
-      const t = byName[norm(r.nama)];
-      if (!t) { unk[r.nama] = (unk[r.nama] || 0) + 1; return; }
-      ok.push({ id: r.ts + '_' + t.id + '_' + r.prog, data: { tutorUid: t.id, nama: t.nama, prog: r.prog, ts: r.ts } });
-    });
-    for (let i = 0; i < ok.length; i += 400) {
-      const b = writeBatch(db); ok.slice(i, i + 400).forEach(x => b.set(doc(db, 'attendance', x.id), x.data)); await b.commit();
-    }
-    let r = `<div class="warn">${ok.length} absensi diimpor (yang sudah ada tertimpa dengan data sama).`;
-    if (Object.keys(unk).length) r += '<br><b>Nama tutor tidak cocok, dilewati:</b> ' + Object.keys(unk).map(n => esc(n) + ' (' + unk[n] + ')').join(', ') + '. Tambahkan tutor dengan nama persis sama, lalu impor ulang.';
-    if (bad.length) r += '<br>' + bad.length + ' baris tidak dikenali.';
-    $('#impRes').innerHTML = r + '</div>';
+  $('#saveUrl').onclick = async () => {
+    const u = $('#sheetUrl').value.trim();
+    if (u && !toCsvUrl(u)) return toast('Link tidak dikenali. Gunakan link "Publikasikan ke web".');
+    await setDoc(doc(db, 'settings', 'config'), { sheetUrl: u }, { merge: true }); cfg.sheetUrl = u; toast('Link tersimpan.');
   };
+  $('#doSync').onclick = async () => {
+    const u = $('#sheetUrl').value.trim();
+    if (u !== (cfg.sheetUrl || '')) { if (u && !toCsvUrl(u)) return toast('Link tidak dikenali.'); await setDoc(doc(db, 'settings', 'config'), { sheetUrl: u }, { merge: true }); cfg.sheetUrl = u; }
+    $('#impRes').innerHTML = '<div class="warn">Mengambil data dari Sheet...</div>';
+    const r = await syncSheet(ts); $('#impRes').innerHTML = r.html;
+    if (r.fresh) setTimeout(() => { if (page === 'a_absen') go('a_absen'); }, 2500);
+  };
+  $('#doImp').onclick = async () => { $('#impRes').innerHTML = (await importText($('#imp').value, ts)).html; };
 };
 
 PAGES.a_gaji = async () => {
