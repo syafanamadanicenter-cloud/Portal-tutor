@@ -370,3 +370,9 @@ td.r, th.r { text-align: right; }
 }
 
 .empty { color: var(--tx-muted); padding: 12px 0; text-align: center; }
+
+.bigtotal{font-size:28px;font-weight:bold;margin:6px 0;color:var(--accent,#06b6d4)}
+table.gt{width:100%}
+table.gt td,table.gt th{padding:7px 5px}
+table.gt td.r,table.gt th.r{text-align:right;white-space:nowrap}
+table.gt .muted{margin-top:2px}
