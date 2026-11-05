@@ -6,5 +6,4 @@ export const firebaseConfig = {
   storageBucket: "portal-tutor.firebasestorage.app",
   messagingSenderId: "2290054364",
   appId: "1:2290054364:web:128081131b21973d603019",
-  measurementId: "G-ESGTZDER1M"
 };
