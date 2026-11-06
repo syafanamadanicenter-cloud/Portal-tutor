@@ -121,7 +121,7 @@ function toCsvUrl(u) {
 /* ---------- gaji berjalan (sejak pembayaran terakhir) ---------- */
 const dayAfter = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d + 1); };
 const payStart = pt => pt ? dayAfter(pt) : new Date(cfg.periodStart + 'T00:00:00');
-async function lastPaid(uid) { const x = await getDoc(doc(db, 'payouts', 'last_' + uid)); return x.exists() ? x.data().paidThrough : null; }
+async function lastPaid(uid) { try { const x = await getDoc(doc(db, 'payouts', 'last_' + uid)); return x.exists() ? x.data().paidThrough : null; } catch (e) { return null; } }
 const isoToD = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
 
 /* ---------- navigasi ---------- */
@@ -129,9 +129,21 @@ const MENU_TUTOR = [['profil', 'Profil & Jadwal'], ['kehadiran', 'Kehadiran & Pe
 const MENU_ADMIN = [['a_tutor', 'Kelola Tutor'], ['a_jadwal', 'Kelola Jadwal'], ['a_ganti', 'Penggantian'], ['a_absen', 'Data Absensi'], ['a_gaji', 'Gaji & Pengaturan']];
 const TITLES = Object.fromEntries(MENU_TUTOR.concat(MENU_ADMIN));
 
+const ICON = {
+  profil: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  kehadiran: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4"/>',
+  gaji: '<rect x="2" y="6" width="20" height="13" rx="2"/><path d="M2 10h20"/><circle cx="17" cy="14.5" r="1.2"/>',
+  a_tutor: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  a_jadwal: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  a_ganti: '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
+  a_absen: '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 12h6M9 16h6"/>',
+  a_gaji: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>'
+};
+const icon = k => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON[k] || '') + '</svg>';
+
 function buildMenu() {
   let h = '';
-  const item = ([k, t]) => `<button class="menuitem ${k === page ? 'active' : ''}" data-go="${k}">${t}</button>`;
+  const item = ([k, t]) => `<button class="menuitem ${k === page ? 'active' : ''}" data-go="${k}">${icon(k)}<span>${t}</span></button>`;
   h += MENU_TUTOR.map(item).join('');
   if (me.role === 'admin') h += '<div class="sect">Admin</div>' + MENU_ADMIN.map(item).join('');
   $('#menuItems').innerHTML = h;
@@ -178,6 +190,7 @@ onAuthStateChanged(auth, async user => {
     me = { uid: user.uid, ...s.data() };
     await loadCfg();
     $('#whoName').textContent = me.nama; $('#whoRole').textContent = me.role === 'admin' ? 'Admin' : 'Tutor';
+    $('#whoAvatar').textContent = (String(me.nama || '?').replace(/^(Mr|Ms|Mrs)\.?\s*/i, '').trim().charAt(0) || '?').toUpperCase();
     $('#loginView').hidden = true; $('#appView').hidden = false;
     go('profil');
     if (me.role === 'admin' && cfg.sheetUrl) {
