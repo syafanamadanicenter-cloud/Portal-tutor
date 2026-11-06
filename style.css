@@ -235,4 +235,4 @@ table.gt .muted { margin-top: 2px; font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
-      }
+}
